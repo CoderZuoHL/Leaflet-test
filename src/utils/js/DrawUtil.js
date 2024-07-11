@@ -77,14 +77,27 @@ DrawUtil.drawFieldMap = function (data, ctx, valueToColorFnc) {
 			// 计算像素点对于在数据中的点的插值
 			let _x = x / w;
 			let _y = y / h;
+			let vup = data[y - 1] ? data[y - 1][x] : data[y][x];
+			let vdown = data[y + 1] ? data[y + 1][x] : data[y][x];
+			let vleft = data[y][x - 1] ? data[y][x - 1] : data[y][x];
+			let vright = data[y][x + 1] ? data[y][x + 1] : data[y][x];
 			let v = data[y][x];//Interpolation(_x, _y, data);
 
+			let rgbaup = DrawUtil.colorToRgba(valueToColorFnc(vup));
+			let rgadown = DrawUtil.colorToRgba(valueToColorFnc(vdown));
+			let rgaleft = DrawUtil.colorToRgba(valueToColorFnc(vleft));
+			let rgaright = DrawUtil.colorToRgba(valueToColorFnc(vright));
 			let rgba = DrawUtil.colorToRgba(valueToColorFnc(v));
 
 			rgbs[index] = rgba[0];
 			rgbs[index + 1] = rgba[1];
 			rgbs[index + 2] = rgba[2];
 			rgbs[index + 3] = rgba[3];
+
+			// rgbs[index] = (1 / 4) * (rgba[0] + rgbaup[0] + rgadown[0] + rgaleft[0] + rgaright[0]);
+			// rgbs[index + 1] = (1 / 4) * (rgba[1] + rgbaup[1] + rgadown[1] + rgaleft[1] + rgaright[1]);
+			// rgbs[index + 2] = (1 / 4) * (rgba[2] + rgbaup[2] + rgadown[2] + rgaleft[2] + rgaright[2]);
+			// rgbs[index + 3] = (1 / 4) * (rgba[3] + rgbaup[3] + rgadown[3] + rgaleft[3] + rgaright[3]);
 		}
 	}
 	ctx.putImageData(imgData, 0, 0);
@@ -124,7 +137,7 @@ DrawUtil.colorToRgba = function (color) {
 	} else {
 		throw new Error("error color string");
 	}
-
+	// rgba[3] = rgba[3] == 0 ? 0 : 180;
 	return rgba;
 }
 

@@ -41,8 +41,8 @@ const init = () => {
     preferCanvas: true,
     attributionControl: false,
     zoomControl: false,
-    center: [29.8, 114],
-    zoom: 8,
+    center: [27.8, 112],
+    zoom: 7,
   }
   const map = L.map('map', mapOption);
   let tileUrl = leafletTools.getTilesUrl(3);
@@ -51,12 +51,10 @@ const init = () => {
   // 添加标记图层
   const markerTileLayer = L.tileLayer(leafletTools.getTilesUrl(6)).addTo(map);
 
-  const marker = L.marker([37.8, 112]).addTo(map)
+  const marker = L.marker([35.8, 108]).addTo(map)
   mapObj.map = map
 
-  let heatMap = new HeatMapOverLayer({
-    geojson
-  })
+  let heatMap = new HeatMapOverLayer()
   let bounds = []
   let maxLat = 30.200000000000003
   let maxLon = 114.30000000000001

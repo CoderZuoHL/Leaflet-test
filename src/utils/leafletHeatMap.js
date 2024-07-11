@@ -1,6 +1,7 @@
 import * as L from 'leaflet'
 import DataUtil from './js/DataUtil'
 import DrawUtil from './js/DrawUtil'
+import drawProductGL from './js/DrawProductGL'
 export class ColorGradient {
   // 配置
   defaultOptions = {
@@ -80,60 +81,7 @@ export class ColorGradient {
 
 }
 
-/**
- * 
- * @param {Array<[longitude, latitude, value]>} data 
- * @returns {Array<Array<number>>} 返回二维数组res[y][x] =value
- */
-export const dataTransform = (data) => {
-  let obj = []
-  let maxlen = 0
-  let maxarr = null
-  data.forEach(item => {
-    if (!obj[item[1]]) {
-      obj[item[1]] = []
-      obj[item[1]].push([item[0], item[1], item[2]])
-    }
-    obj[item[1]].push([item[0], item[1], item[2]])
-  })
 
-  let temarr = Object.values(obj)
-  let sortarr = temarr.sort((a, b) => b[0][1] - a[0][1])
-  sortarr.forEach(item => {
-    if (item.length >= maxlen) {
-      maxlen = item.length
-      maxarr = item
-    }
-  })
-
-  let res = []
-  sortarr.forEach(item => {
-    item.forEach((element, index) => {
-      let findIndex = maxarr.findIndex(e => e[0] === element[0])
-      if (findIndex == -1) {
-        maxarr.push(element)
-        maxlen = maxarr.length
-      }
-      maxarr = maxarr.sort((a, b) => a[0] - b[0])
-    })
-  })
-  sortarr.forEach(item => {
-    let _item = new Array(maxlen).fill(0)
-
-    item.forEach((element, index) => {
-      let findIndex = maxarr.findIndex(e => e[0] === element[0])
-      if (findIndex == -1) {
-        console.log('error', element, index)
-      }
-      else {
-        _item[findIndex] = element[2]
-      }
-    })
-    res.push(_item)
-  })
-
-  return res
-}
 
 const HeatMapOverLayer = L.Layer.extend({
   // 配置
@@ -164,11 +112,13 @@ const HeatMapOverLayer = L.Layer.extend({
   __bigData: null, //上一次插值后数据
   _latitudes: [], // 原始格点数据的纬度映射数组
   _longitudes: [], // 原始格点数据的经度映射数组
+  _imageCache: {}, // 产品图片缓存， 最高缓存到8级 最低缓存到4级， 小于4级用4级图片， 高于8级用8级图片
+  _debounceReset: null,
   // 初始化
   initialize: function (options) {
     this._options = Object.assign(this._options, options)
     L.Util.setOptions(this, this._options)
-
+    this._debounceReset = this._debounce(this._reset, 50)
     // create a new heatmap object
   },
 
@@ -204,18 +154,18 @@ const HeatMapOverLayer = L.Layer.extend({
     panes[this._options.pane].appendChild(this._el)
 
     // 监听地图缩放事件
-    map.on('zoomend', this._reset, this)
-    map.on('moveend', this._reset, this)
-    map.on('resize', this._reset, this)
+    map.on('zoomend', this._debounceReset, this)
+    map.on('moveend', this._debounceReset, this)
+    map.on('resize', this._debounceReset, this)
     if (map._zoomAnimated) {
       map.on('zoomanim', this._animateZoom, this);
     }
   },
   onRemove: function (map) {
     // 移除地图缩放事件
-    map.off('zoomend', this._reset, this)
-    map.off('moveend', this._reset, this)
-    map.off('resize', this._reset, this)
+    map.off('zoomend', this._debounceReset, this)
+    map.off('moveend', this._debounceReset, this)
+    map.off('resize', this._debounceReset, this)
     if (map._zoomAnimated) {
       map.off('zoomanim', this._animateZoom, this);
     }
@@ -286,325 +236,67 @@ const HeatMapOverLayer = L.Layer.extend({
 
     // 为了减少绘制和插值消耗
     // 始终插值在视区内的数据和画布
-    let renderWidth = width // 插值的目标宽度
-    let renderHeight = height // 插值的目标高度
+    let renderWidth = Math.floor(width) // 插值的目标宽度
+    let renderHeight = Math.floor(height) // 插值的目标高度
     let renderTopLeft = topLeft // 插值的目标左上角
-    let splitIndexY = 0 // 截取二维数组Y方向的index， 截取长度为 renderHeight / height * dataHeight
-    let splitIndexX = 0 // 截取二维数组X方向的index， 截取长度为 renderWidth / width * dataWidth
-
-    // 计算插值的目标宽高
-    let mapBounds = this._map.getBounds()
-
-    // 当只有东北顶点在视区内时
-    if (mapBounds.contains(northEast) && !mapBounds.contains(northWest) && !mapBounds.contains(southEast) && !mapBounds.contains(southWest)) {
-      renderWidth = topRight.x
-      renderHeight = this._height - topRight.y
-      renderTopLeft.x = 0
-      renderTopLeft.y = topRight.y
-
-    }
-    // 当只有东南顶点在视区内时
-    else if (!mapBounds.contains(northEast) && !mapBounds.contains(northWest) && mapBounds.contains(southEast) && !mapBounds.contains(southWest)) {
-      renderWidth = bottomRight.x
-      renderHeight = bottomRight.y
-      renderTopLeft.x = 0
-      renderTopLeft.y = 0
-
-    }
-    // 当只有西北顶点在视区内时
-    else if (!mapBounds.contains(northEast) && mapBounds.contains(northWest) && !mapBounds.contains(southEast) && !mapBounds.contains(southWest)) {
-      renderWidth = this._width - topLeft.x
-      renderHeight = this._height - topLeft.y
-      renderTopLeft.x = topLeft.x
-      renderTopLeft.y = topLeft.y
-
-    }
-    // 当只有西南顶点在视区内时
-    else if (!mapBounds.contains(northEast) && !mapBounds.contains(northWest) && !mapBounds.contains(southEast) && mapBounds.contains(southWest)) {
-      renderWidth = this._width - bottomLeft.x
-      renderHeight = bottomLeft.y
-      renderTopLeft.x = bottomLeft.x
-      renderTopLeft.y = 0
-
-    }
-    // 当四个顶点都不在视区内时
-    else if (!mapBounds.contains(northEast) && !mapBounds.contains(northWest) && !mapBounds.contains(southEast) && !mapBounds.contains(southWest)) {
-      // 分开判断
-
-      // 当左下角的顶点x坐标在小于视区宽度 且大于于0时 且 右上顶点x坐标在画布外 
-      if (bottomLeft.x < this._width && bottomLeft.x > 0 && topRight.x > this._width && topRight.y < 0 && bottomLeft.y > this._height) {
-        renderWidth = this._width - bottomLeft.x
-        renderHeight = this._height
-        renderTopLeft.x = bottomLeft.x
-        renderTopLeft.y = 0
-
-      }
-      // 当左下角的顶点x坐标在小于视区宽度 且大于于0时 且 右上顶点x坐标在画布内
-      else if (bottomLeft.x < this._width && bottomLeft.x > 0 && topRight.x < this._width && topRight.y < 0 && bottomLeft.y > this._height) {
-        renderWidth = width
-        renderHeight = this._height
-        renderTopLeft.x = bottomLeft.x
-        renderTopLeft.y = 0
-
-      }
-      // 当右上角顶点x坐标小于视区宽度  且 大于0时 且 左下顶点x在画布外
-      else if (topRight.x < this._width && topRight.x > 0 && bottomLeft.x < 0 && topRight.y < 0 && bottomLeft.y > this._height) {
-        renderWidth = topRight.x
-        renderHeight = this._height
-        renderTopLeft.x = 0
-        renderTopLeft.y = 0
-
-      }
-      // 当右上角顶点x坐标小于视区宽度  且 大于0时 且 左下顶点x在画布内
-      else if (topRight.x < this._width && topRight.x > 0 && bottomLeft.x > 0 && topRight.y < 0 && bottomLeft.y > this._height) {
-        renderWidth = width
-        renderHeight = this._height
-        renderTopLeft.x = 0
-        renderTopLeft.y = 0
-
-      }
-      // 当右上角顶点y坐标小于视区高度 且 大于0时 且 左下顶点y坐标在画布外
-      else if (topRight.y < this._height && topRight.y > 0 && bottomLeft.y > this._height && topRight.x < this._width && topRight.x > 0) {
-        renderWidth = this._width
-        renderHeight = this._height - topRight.y
-        renderTopLeft.x = 0
-        renderTopLeft.y = topLeft.y
-        console.log(123);
-
-      }
-      // 当右上角顶点y坐标小于视区高度 且 大于0时 且 左下顶点y坐标在画布内
-      else if (topRight.y < this._height && topRight.y > 0 && bottomLeft.y < this._height && topRight.x < this._width) {
-        renderWidth = this._width
-        renderHeight = height
-        renderTopLeft.x = 0
-        renderTopLeft.y = topLeft.y
-        console.log(1236);
-
-      }
-      // 当左下角顶点y坐标小于视区高度 且 大于0时  且 右上顶点y坐标在画布外
-      else if (bottomLeft.y < this._height && bottomLeft.y > 0 && topRight.y < 0 && topRight.x < this._width && topRight.x > 0) {
-        renderWidth = this._width
-        renderHeight = bottomLeft.y
-        renderTopLeft.x = 0
-        renderTopLeft.y = 0
-        console.log(1235);
-
-
-
-      }
-      // 当左下角顶点y坐标小于视区高度 且 大于0时  且 右上顶点y坐标在画布内
-      else if (bottomLeft.y < this._height && bottomLeft.y > 0 && topRight.y > 0 && bottomLeft.x < this._width) {
-        renderWidth = this._width
-        renderHeight = height
-        renderTopLeft.x = 0
-        renderTopLeft.y = 0
-        console.log(1234);
-
-      }
-      // 当视区在目标图片中的一部分位置时，
-      else if (
-        topRight.y - bottomLeft.y < 0 - this._height &&
-        topRight.x - bottomLeft.x > this._width
-      ) {
-        renderHeight = this._height
-        renderWidth = this._width
-        renderTopLeft.x = 0
-        renderTopLeft.y = 0
-
-      } else {
-        renderHeight = 0
-        renderWidth = 0
-        renderTopLeft.x = 0
-        renderTopLeft.y = 0
-
-      }
-    }
-    // 当仅有北边两个顶点在画布内时 
-    else if (mapBounds.contains(northEast) && mapBounds.contains(northWest) && !mapBounds.contains(southEast) && !mapBounds.contains(southWest)) {
-      renderWidth = width
-      renderHeight = this._height - topRight.y
-      renderTopLeft.x = topLeft.x
-      renderTopLeft.y = topLeft.y
-
-    }
-    // 当仅有南边两个顶点在画布内时 
-    else if (mapBounds.contains(southEast) && mapBounds.contains(southWest) && !mapBounds.contains(northEast) && !mapBounds.contains(northWest)) {
-      renderWidth = width
-      renderHeight = bottomLeft.y
-      renderTopLeft.x = bottomLeft.x
-      renderTopLeft.y = 0
-
-    }
-    // 当仅有西边两个顶点在画布内时 
-    else if (mapBounds.contains(southWest) && mapBounds.contains(northWest) && !mapBounds.contains(northEast) && !mapBounds.contains(southEast)) {
-      renderWidth = this._width - bottomLeft.x
-      renderHeight = height
-      renderTopLeft.x = topLeft.x
-      renderTopLeft.y = topLeft.y
-
-    }
-    // 当仅有东边两个顶点在画布内时 
-    else if (mapBounds.contains(southEast) && mapBounds.contains(northEast) && !mapBounds.contains(northWest) && !mapBounds.contains(southWest)) {
-      renderWidth = topRight.x
-      renderHeight = height
-      renderTopLeft.x = 0
-      renderTopLeft.y = topRight.y
-
-    }
-
-    // 获取绘制矩形的左上角顶点经纬度坐标
-    let topLeftLatLon = this._map.containerPointToLatLng([renderTopLeft.x, renderTopLeft.y])
-    // 获取绘制矩形的右下角顶点经纬度坐标
-    let bottomRightLatLon = this._map.containerPointToLatLng([renderTopLeft.x + renderWidth, renderTopLeft.y + renderHeight])
-
-    // 获取到绘制矩形最小纬度
-    let renderMinLat = bottomRightLatLon.lat
-    // 获取到绘制矩形最大纬度
-    let renderMaxLat = topLeftLatLon.lat
-    // 获取到绘制矩形最大经度
-    let renderMaxLng = bottomRightLatLon.lng
-    // 获取到绘制矩形最小经度
-    let renderMinLng = topLeftLatLon.lng
-
-    // 从原始数据维度映射数组中找到小于等于绘制矩形最大维度的最小索引
-    let renderMaxLatIndex = this._latitudes.findIndex((lat, index) => {
-      if (lat >= renderMaxLat && renderMaxLat >= this._latitudes[index + 1]) return true
-    })
-    renderMaxLatIndex = renderMaxLatIndex === -1 ? 0 : renderMaxLatIndex
-
-    // 从原始数据维度映射数组中找到大于等于绘制矩形最小维度的最大索引
-    let renderMinLatIndex = this._latitudes.findIndex((lat, index) => {
-      if (lat <= renderMinLat && renderMinLat <= this._latitudes[index - 1]) return true
-    })
-    renderMinLatIndex = renderMinLatIndex === -1 ? this._latitudes.length - 1 : renderMinLatIndex
-
-    // 冲原始数据维度映射数组中找到小于等于绘制矩形最大经度的最小索引
-    let renderMaxLngIndex = this._longitudes.findIndex((lng, index) => {
-      if (lng <= renderMaxLng && renderMaxLng <= this._longitudes[index + 1]) return true
-    })
-    renderMaxLngIndex = renderMaxLngIndex === -1 ? this._longitudes.length - 1 : renderMaxLngIndex
-
-    // 从原始数据维度映射数组中找到大于等于绘制矩形最小经度的最大索引
-    let renderMinLngIndex = this._longitudes.findIndex((lng, index) => {
-      if (lng >= renderMinLng && renderMinLng >= this._longitudes[index - 1]) return true
-    })
-    renderMinLngIndex = renderMinLngIndex === -1 ? 0 : renderMinLngIndex
-
-    console.log(renderMinLatIndex, renderMaxLatIndex, renderMinLngIndex, renderMaxLngIndex);
-
     // 绘制render矩形、
-    let splitData = this._data.slice(renderMaxLatIndex, renderMinLatIndex + 1).map((row) => {
-      return row.slice(renderMinLngIndex, renderMaxLngIndex + 1)
-    })
-
-    // let tempdata = this._data.map((row, y) => {
-    //   row = row.map((v, x) => {
-    //     let obj = {
-    //       lat: this._latitudes[y],
-    //       lng: this._longitudes[x],
-    //       value: v
-    //     }
-    //     return obj
-    //   })
-    //   return row
-    // })
-
-    // let filterdata = tempdata.filter((row) => {
-    //   row = row.filter((v) => {
-    //     console.log(this._bounds.contains([v.lng, v.lat]));
-
-    //     return this._bounds.contains([v.lat, v.lng])
-    //   })
-    //   return row.length > 0
-    // })
-    // console.log(filterdata);
+    let splitData = this._data
 
     this._ctx.strokeStyle = 'blue'
     this._ctx.lineWidth = 4
     this._ctx.strokeRect(renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
 
-    // // data format 将散点数据转换为二维矩阵
-    // let transformData = dataTransform(data)
-    // console.log(transformData);
 
-    // // 更具画布尺寸进行数据插值 
-    let bigData = DataUtil.scaleData(renderWidth, renderHeight, splitData);
-    // console.log(bigData.length, bigData[0].length, renderHeight, renderWidth);
+    let zoom = this._map.getZoom()
 
+    let zoomKey = zoom >= 8 ? 8 : zoom
+    zoomKey = zoomKey <= 4 ? 4 : zoomKey
 
-    // // // // 
-    // // // let getcanvas = document.querySelector('.filemap')
-    // // // if (getcanvas) {
-    // // //   getcanvas.remove()
-    // // // }
-    // // // // 创建绘制图片的canvas
-    let canvas = document.createElement('canvas')
-    canvas.style.position = 'absolute'
-    canvas.style.top = '100px'
-    canvas.style.left = '100px'
-    canvas.style.zIndex = '999'
-    canvas.className = 'filemap'
-    canvas.width = renderWidth
-    canvas.height = renderHeight
-    // document.body.appendChild(canvas)
-    let canvasCtx = canvas.getContext('2d')
+    if (this._imageCache[zoomKey]) {
+      this._ctx.drawImage(this._imageCache[zoomKey], renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
+      return
+    } else {
+      let bigData = DataUtil.scaleData(renderWidth, renderHeight, splitData);
+      let canvas = document.createElement('canvas')
+      canvas.style.position = 'absolute'
+      canvas.style.top = '100px'
+      canvas.style.left = '100px'
+      canvas.style.zIndex = '999'
+      canvas.className = 'filemap'
+      canvas.width = renderWidth
+      canvas.height = renderHeight
+      // document.body.appendChild(canvas)
+      let canvasCtx = canvas.getContext('2d')
 
-    let color = new ColorGradient()
-    let imageData = DrawUtil.drawFieldMap(bigData, canvasCtx, (v) => {
-      v = Math.abs(v);
+      let color = new ColorGradient()
+      let imageData = DrawUtil.drawFieldMap(bigData, canvasCtx, (v) => {
+        v = Math.abs(v);
+        let gray = Math.round(255 * (v - this._options.min) / (this._options.max - this._options.min));
 
-      let c = "";
-      // 不同的值，对应不同的颜色
-      if (v == 0) {
-        c = 'rgba(0,0,0,0)';
-      } else {
-        let colorObj = color.colorPicker(v)
-        c = `rgba(${colorObj.r},${colorObj.g},${colorObj.b},${colorObj.a})`
-      }
+        let c = `rgba(${gray},${gray},${gray},255)`;
 
-      return c;
-    })
+        return c;
+      })
+
+      // 缓存每一级的图片
+      this._imageCache[zoomKey] = canvas
 
 
-    // // 将绘制好的图片绘制到canvas上
-    this._ctx.drawImage(canvas, renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
-    console.log(this._options.geojson);
-    // let geojson = this._options.geojson
-    // if (geojson) {
+      let product = drawProductGL(imageUrl, renderWidth, renderHeight, new Uint8Array(color.imageData))
+      // 将绘制好的图片绘制到canvas上
+      this._ctx.drawImage(canvas, renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
 
-
-    //   let path = []
-    //   geojson.features.forEach((item, index) => {
-    //     item.geometry.coordinates.forEach((coords, _index) => {
-    //       coords.forEach((coord, __index) => {
-    //         coord.forEach((c, __index__) => {
-    //           path.push(
-    //             this._map.latLngToContainerPoint(new L.LatLng(c[1], c[0]
-    //             )))
-    //         })
-    //       })
-    //     })
-    //   })
-    //   path.push(path[0])
-    //   this._ctx.globalCompositeOperation = 'destination-in'
-    //   this._ctx.beginPath()
-    //   this._ctx.strokeStyle = 'rgba(0,0,0,0)'
-    //   this._ctx.moveTo(path[0][0], path[0][1])
-    //   path.forEach((item, index) => {
-    //     this._ctx.lineTo(item[0], item[1])
-    //     this._ctx.moveTo(item[0], item[1])
-    //     this._ctx.stroke()
-
-    //   })
-    //   this._ctx.stroke()
-    //   // this._ctx.fill()
-    //   // this._ctx.globalCompositeOperation = 'source-over'
-
-    // }
-
-
-
+    }
   },
+
+  _transformImage: function (image, data) {
+    let canvas = document.createElement('canvas')
+    canvas.className = 'filemap'
+    canvas.width = image.width
+    canvas.height = image.height
+    // document.body.appendChild(canvas)
+  },
+
 
   _animateZoom(e) {
     const scale = this._map.getZoomScale(e.zoom),
@@ -612,6 +304,20 @@ const HeatMapOverLayer = L.Layer.extend({
 
     L.DomUtil.setTransform(this._el, offset, scale);
   },
+
+  _debounce: function (func, wait, immediate) {
+    let timeout;
+    return function () {
+      const context = this;
+      const args = arguments;
+      clearTimeout(timeout);
+      timeout = setTimeout(function () {
+        func.apply(context, args);
+      }, wait);
+    };
+  },
+
+
   _reset: function () {
     this._origin = this._map.layerPointToLatLng(new L.Point(0, 0));
 
