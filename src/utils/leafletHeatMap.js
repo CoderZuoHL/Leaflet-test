@@ -281,7 +281,7 @@ const HeatMapOverLayer = L.Layer.extend({
       // 缓存每一级的图片
       this._imageCache[zoomKey] = canvas
 
-
+      let imageUrl = canvas.toDataURL('image/png')
       let product = drawProductGL(imageUrl, renderWidth, renderHeight, new Uint8Array(color.imageData))
       // 将绘制好的图片绘制到canvas上
       this._ctx.drawImage(canvas, renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
