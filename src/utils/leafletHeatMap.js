@@ -1,7 +1,7 @@
 import * as L from 'leaflet'
 import DataUtil from './js/DataUtil'
 import DrawUtil from './js/DrawUtil'
-import drawProductGL from './js/DrawProductGL'
+import GLRender from './js/DrawProductGL'
 export class ColorGradient {
   // 配置
   defaultOptions = {
@@ -114,11 +114,13 @@ const HeatMapOverLayer = L.Layer.extend({
   _longitudes: [], // 原始格点数据的经度映射数组
   _imageCache: {}, // 产品图片缓存， 最高缓存到8级 最低缓存到4级， 小于4级用4级图片， 高于8级用8级图片
   _debounceReset: null,
+  GLRender: null,
   // 初始化
   initialize: function (options) {
     this._options = Object.assign(this._options, options)
     L.Util.setOptions(this, this._options)
     this._debounceReset = this._debounce(this._reset, 50)
+
     // create a new heatmap object
   },
 
@@ -149,6 +151,10 @@ const HeatMapOverLayer = L.Layer.extend({
     this._canvas.width = size.x
     this._canvas.height = size.y
 
+    this.GLRender = new GLRender({
+      width: this._width,
+      height: this._height
+    })
     // 将layer添加到地图
     let panes = map.getPanes()
     panes[this._options.pane].appendChild(this._el)
@@ -253,8 +259,8 @@ const HeatMapOverLayer = L.Layer.extend({
     zoomKey = zoomKey <= 4 ? 4 : zoomKey
 
     if (this._imageCache[zoomKey]) {
-      this._ctx.drawImage(this._imageCache[zoomKey], renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
-      return
+      console.log('有缓存');
+
     } else {
       let bigData = DataUtil.scaleData(renderWidth, renderHeight, splitData);
       let canvas = document.createElement('canvas')
@@ -273,20 +279,32 @@ const HeatMapOverLayer = L.Layer.extend({
         v = Math.abs(v);
         let gray = Math.round(255 * (v - this._options.min) / (this._options.max - this._options.min));
 
-        let c = `rgba(${gray},${gray},${gray},255)`;
-
+        // let c = `rgba(${gray},${gray},${gray},255)`;
+        let c = "";
+        // 不同的值，对应不同的颜色
+        if (v == 0) {
+          c = 'rgba(0,0,0,0)';
+        } else {
+          let colorObj = color.colorPicker(v)
+          c = `rgba(${colorObj.r},${colorObj.g},${colorObj.b},${colorObj.a})`
+        }
         return c;
       })
 
       // 缓存每一级的图片
       this._imageCache[zoomKey] = canvas
 
-      let imageUrl = canvas.toDataURL('image/png')
-      let product = drawProductGL(imageUrl, renderWidth, renderHeight, new Uint8Array(color.imageData))
-      // 将绘制好的图片绘制到canvas上
-      this._ctx.drawImage(canvas, renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
 
     }
+    console.time('绘制')
+    let color = new ColorGradient()
+    let imageUrl = this._imageCache[zoomKey].toDataURL('image/png')
+
+    console.log(this.GLRender);
+
+    // 将绘制好的图片绘制到canvas上
+    // this._ctx.drawImage(product, renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
+    console.timeEnd('绘制')
   },
 
   _transformImage: function (image, data) {
