@@ -1,21 +1,27 @@
 import * as L from 'leaflet'
-import DataUtil from './js/DataUtil'
-import DrawUtil from './js/DrawUtil'
-import GLRender from './js/DrawProductGL'
+import GLRender from './leaflet-gl-heat-map/DrawProductGL'
 export class ColorGradient {
   // 配置
   defaultOptions = {
     gradient: {
-      0: "#53aed9",
-      0.00390625: '#53aed9',
-      0.0078125: '#00a3e8',
-      0.015625: '#00ff43',
-      0.03125: '#23b107',
-      0.0625: '#fdf204',
-      0.125: '#ff7f28',
-      0.25: "#ee1a22",
-      0.5: '#ff00fc',
-      '1': '#a04aa3',
+      0: "rgba(0, 0, 0, 0)",
+      0.142: 'rgba(0, 161, 247,1)',
+      // 0.142: 'rgba(0, 0, 0, 0)',
+      0.214: 'rgba(0, 237, 237,1)',
+      0.285: 'rgba(0, 217, 0,1)',
+      0.357: 'rgba(0, 145, 0,1)',
+      0.428: 'rgba(255, 255, 0, 1)',
+      0.500: 'rgba(231, 193, 0, 1)',
+      0.571: "rgba(255, 145, 0, 1)",
+      0.642: 'rgba(255, 0, 0, 1)',
+      0.714: 'rgba(215, 0, 0, 1)',
+      0.785: 'rgba(193, 0, 0, 1)',
+      0.857: 'rgba(255, 0, 241 , 1)',
+      0.928: 'rgba(151, 0, 181, 1)',
+      1: 'rgba(173, 145, 241,1)',
+      // 0: "rgba(0, 0, 0, 0)",
+
+      // 1: 'red'
     },
     with: 20,
     height: 256,
@@ -86,13 +92,6 @@ export class ColorGradient {
 const HeatMapOverLayer = L.Layer.extend({
   // 配置
   _options: {
-    radius: 0.1,
-    maxOpacity: 0.5,
-    scaleRadius: true,
-    useLocalExtrema: true,
-    latField: 'lat',
-    lngField: 'lng',
-    valueField: 'value',
     max: 256,
     min: 0,
     pane: 'overlayPane',
@@ -114,12 +113,12 @@ const HeatMapOverLayer = L.Layer.extend({
   _longitudes: [], // 原始格点数据的经度映射数组
   _imageCache: {}, // 产品图片缓存， 最高缓存到8级 最低缓存到4级， 小于4级用4级图片， 高于8级用8级图片
   _debounceReset: null,
-  GLRender: null,
+  _glRender: null,
   // 初始化
   initialize: function (options) {
     this._options = Object.assign(this._options, options)
     L.Util.setOptions(this, this._options)
-    this._debounceReset = this._debounce(this._reset, 50)
+    this._debounceReset = this._debounce(this._reset, 0)
 
     // create a new heatmap object
   },
@@ -143,18 +142,13 @@ const HeatMapOverLayer = L.Layer.extend({
     this._el.appendChild(this._canvas)
 
     // 获取canvas context
-    this._ctx = this._canvas.getContext('2d')
 
     // 设置canvas尺寸
     this._canvas.style.width = size.x + 'px'
     this._canvas.style.height = size.y + 'px'
     this._canvas.width = size.x
     this._canvas.height = size.y
-
-    this.GLRender = new GLRender({
-      width: this._width,
-      height: this._height
-    })
+    // this._canvas.style.background = 'red'
     // 将layer添加到地图
     let panes = map.getPanes()
     panes[this._options.pane].appendChild(this._el)
@@ -166,6 +160,8 @@ const HeatMapOverLayer = L.Layer.extend({
     if (map._zoomAnimated) {
       map.on('zoomanim', this._animateZoom, this);
     }
+    // 初始化render 
+    this._glRender = new GLRender('.leaflet-heatmap-canvas')
   },
   onRemove: function (map) {
     // 移除地图缩放事件
@@ -181,130 +177,48 @@ const HeatMapOverLayer = L.Layer.extend({
 
   },
   setData: function (data, bounds) {
-    let dataHeight = data.length
-    let dataWidth = data[0].length
 
-    // 获取经纬度映射数组
-    this._latitudes = new Array(dataHeight).fill(0)
-    this._longitudes = new Array(dataWidth).fill(0)
-
-    for (let i = 0; i < dataHeight; i++) {
-      this._latitudes[i] = bounds.getNorth() - i * (bounds.getNorth() - bounds.getSouth()) / dataHeight
-    }
-    for (let i = 0; i < dataWidth; i++) {
-      this._longitudes[i] = bounds.getWest() + i * (bounds.getEast() - bounds.getWest()) / dataWidth
-    }
 
     this._data = data
 
     this._bounds = bounds
+
     // 更新数据
-    this._reDraw()
+    console.time('setData')
+    this._glRender.loadImageTexture(this._data).then(() => {
+
+      this._reDraw().finally(() => {
+        console.timeEnd('setData')
+      })
+    })
   },
   _reDraw: function () {
-    // 清除画布
-    this._ctx.clearRect(0, 0, this._width, this._height)
+    return new Promise((resolve, reject) => {
+      console.time('reDraw')
+      // 边界
+      const bounds = this._bounds
 
-    // 过滤data 将不在视区的data过滤掉
-    let data = this._data
-    let dataWidth = data[0].length
-    let dataHeight = data.length
+      let topRight = this._map.latLngToContainerPoint(bounds.getNorthEast())
+      let topLeft = this._map.latLngToContainerPoint(bounds.getNorthWest())
+      let bottomLeft = this._map.latLngToContainerPoint(bounds.getSouthWest())
 
+      let width = Math.abs(topRight.x - bottomLeft.x) // 绘制图片的原始宽度
+      let height = Math.abs(topRight.y - bottomLeft.y) // 绘制图片的原始高度
 
-    // 边界
-    const bounds = this._bounds
-    let topRight = this._map.latLngToContainerPoint(bounds.getNorthEast())
-    let topLeft = this._map.latLngToContainerPoint(bounds.getNorthWest())
-    let bottomLeft = this._map.latLngToContainerPoint(bounds.getSouthWest())
-    let bottomRight = this._map.latLngToContainerPoint(bounds.getSouthEast())
+      // 为了减少绘制和插值消耗
+      // 始终插值在视区内的数据和画布
+      let renderWidth = Math.floor(width) // 插值的目标宽度
+      let renderHeight = Math.floor(height) // 插值的目标高度
+      let renderTopLeft = topLeft // 插值的目标左上角
 
-    let northEast = bounds.getNorthEast()
-    let northWest = bounds.getNorthWest()
-    let southEast = bounds.getSouthEast()
-    let southWest = bounds.getSouthWest()
+      this._glRender.render(renderTopLeft, renderWidth, renderHeight)
 
+      console.timeEnd('reDraw')
+      resolve(true)
 
-    let width = Math.abs(topRight.x - bottomLeft.x) // 绘制图片的原始宽度
-    let height = Math.abs(topRight.y - bottomLeft.y) // 绘制图片的原始高度
-
-    // 绘制图片原始矩形来测试
-    this._ctx.strokeStyle = 'red'
-    this._ctx.lineWidth = 1
-    this._ctx.strokeRect(topLeft.x, topLeft.y, width, height)
-
-    // 在每个顶点标注出顶点在画布上的位置
-    this._ctx.fillStyle = 'red'
-    this._ctx.font = '18px Arial'
-    this._ctx.fillText(`(${topLeft.x}, ${topLeft.y})`, topLeft.x - 100 - 1, topLeft.y - 1, 100)
-    this._ctx.fillText(`(${topRight.x}, ${topRight.y})`, topRight.x + 1, topRight.y - 1, 100)
-    this._ctx.fillText(`(${bottomLeft.x}, ${bottomLeft.y})`, bottomLeft.x - 100 - 1, bottomLeft.y + 1, 100)
-    this._ctx.fillText(`(${bottomRight.x}, ${bottomRight.y})`, bottomRight.x + 1, bottomRight.y + 1, 100)
-
-    // 为了减少绘制和插值消耗
-    // 始终插值在视区内的数据和画布
-    let renderWidth = Math.floor(width) // 插值的目标宽度
-    let renderHeight = Math.floor(height) // 插值的目标高度
-    let renderTopLeft = topLeft // 插值的目标左上角
-    // 绘制render矩形、
-    let splitData = this._data
-
-    this._ctx.strokeStyle = 'blue'
-    this._ctx.lineWidth = 4
-    this._ctx.strokeRect(renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
+    })
 
 
-    let zoom = this._map.getZoom()
-
-    let zoomKey = zoom >= 8 ? 8 : zoom
-    zoomKey = zoomKey <= 4 ? 4 : zoomKey
-
-    if (this._imageCache[zoomKey]) {
-      console.log('有缓存');
-
-    } else {
-      let bigData = DataUtil.scaleData(renderWidth, renderHeight, splitData);
-      let canvas = document.createElement('canvas')
-      canvas.style.position = 'absolute'
-      canvas.style.top = '100px'
-      canvas.style.left = '100px'
-      canvas.style.zIndex = '999'
-      canvas.className = 'filemap'
-      canvas.width = renderWidth
-      canvas.height = renderHeight
-      // document.body.appendChild(canvas)
-      let canvasCtx = canvas.getContext('2d')
-
-      let color = new ColorGradient()
-      let imageData = DrawUtil.drawFieldMap(bigData, canvasCtx, (v) => {
-        v = Math.abs(v);
-        let gray = Math.round(255 * (v - this._options.min) / (this._options.max - this._options.min));
-
-        // let c = `rgba(${gray},${gray},${gray},255)`;
-        let c = "";
-        // 不同的值，对应不同的颜色
-        if (v == 0) {
-          c = 'rgba(0,0,0,0)';
-        } else {
-          let colorObj = color.colorPicker(v)
-          c = `rgba(${colorObj.r},${colorObj.g},${colorObj.b},${colorObj.a})`
-        }
-        return c;
-      })
-
-      // 缓存每一级的图片
-      this._imageCache[zoomKey] = canvas
-
-
-    }
-    console.time('绘制')
-    let color = new ColorGradient()
-    let imageUrl = this._imageCache[zoomKey].toDataURL('image/png')
-
-    console.log(this.GLRender);
-
-    // 将绘制好的图片绘制到canvas上
-    // this._ctx.drawImage(product, renderTopLeft.x, renderTopLeft.y, renderWidth, renderHeight)
-    console.timeEnd('绘制')
   },
 
   _transformImage: function (image, data) {
@@ -312,14 +226,12 @@ const HeatMapOverLayer = L.Layer.extend({
     canvas.className = 'filemap'
     canvas.width = image.width
     canvas.height = image.height
-    // document.body.appendChild(canvas)
   },
 
 
   _animateZoom(e) {
     const scale = this._map.getZoomScale(e.zoom),
       offset = this._map._latLngBoundsToNewLayerBounds(this._map.getBounds(), e.zoom, e.center).min;
-
     L.DomUtil.setTransform(this._el, offset, scale);
   },
 
@@ -355,14 +267,16 @@ const HeatMapOverLayer = L.Layer.extend({
       this._ctx.height = this._height;
     }
 
-    // 重新获取地图位置
-    let mapPane = this._map.getPanes().mapPane;
-    let point = mapPane._leaflet_pos;
-    this._el.style[HeatMapOverLayer.CSS_TRANSFORM] =
-      'translate(' + -Math.round(point.x) + 'px,' + -Math.round(point.y) + 'px)';
+
 
     // 重新绘制
-    this._reDraw()
+    this._reDraw().then(res => {
+      // 重新获取地图位置
+      let mapPane = this._map.getPanes().mapPane;
+      let point = mapPane._leaflet_pos;
+      this._el.style[HeatMapOverLayer.CSS_TRANSFORM] =
+        'translate(' + -Math.round(point.x) + 'px,' + -Math.round(point.y) + 'px)';
+    })
   }
 })
 HeatMapOverLayer.CSS_TRANSFORM = (function () {

@@ -169,7 +169,7 @@ export const drawProductGL = (grayImageUrl, renderWidth, renderHeight, linearGra
       // our texture
       uniform sampler2D u_image;
       uniform vec2 u_textureSize;
-
+      uniform highp sampler2D colorMap
       // the texCoords passed in from the vertex shader.
       varying vec2 v_texCoord;
 

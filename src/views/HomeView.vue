@@ -18,7 +18,8 @@ import HeatMapOverLayer from '@/utils/leafletHeatMap'
 import * as sourceData from './heatMapData'
 import { ColorGradient } from '@/utils/leafletHeatMap'
 import * as geojson from './430000.json'
-
+import createImageFromData from '@/utils/creatImagefromData';
+import image from '@/assets/image.png'
 const value = ref(0)
 const mycolorGradient = new ColorGradient()
 const color = ref('')
@@ -45,7 +46,7 @@ const init = () => {
     zoom: 7,
   }
   const map = L.map('map', mapOption);
-  let tileUrl = leafletTools.getTilesUrl(3);
+  let tileUrl = leafletTools.getTilesUrl(2);
   const titleLayer = L.tileLayer(tileUrl).addTo(map);
 
   // 添加标记图层
@@ -56,23 +57,32 @@ const init = () => {
 
   let heatMap = new HeatMapOverLayer()
   let bounds = []
-  let maxLat = 30.200000000000003
-  let maxLon = 114.30000000000001
-  let minLat = 24.6
-  let minLon = 108.7
+  // let maxLat = 30.200000000000003
+  // let maxLon = 114.30000000000001
+  // let minLat = 24.6
+  // let minLon = 108.7
+
+  let maxLat = 12.2
+  let maxLon = 135
+  let minLat = 54.2
+  let minLon = 73
   let topRight = [maxLat, maxLon]
   let bottomLeft = [minLat, minLon]
   bounds = L.latLngBounds(bottomLeft, topRight)
   heatMap.addTo(map)
-  heatMap.setData(sourceData.data, bounds)
+  heatMap.setData(image, bounds)
 }
 
 function randomInRange(start, end) {
   return Math.floor(Math.random() * (end - start + 1) + start);
 }
 
+
+
 onMounted(() => {
   init()
+  // createImage()
+
 })
 </script>
 <style lang="scss">
